@@ -48,7 +48,7 @@ Item {
   function ago() {
     var t = Number(row.ts || 0) * 1000
     if (!t) return ""
-    if (centerMode) return Qt.locale(I18n.formatLocale).toString(new Date(t), "ddd HH:mm")
+    if (centerMode) return Qt.locale(I18n.formatLocale).toString(new Date(t), I18n.t("notifications.centerTimestampFormat"))
     var s = Math.max(0, (now - t) / 1000)
     if (s < 300 && !centerMode) return ""
     if (s < 3600) return I18n.t("notifications.minutesAgo").arg(I18n.formatNumber(Math.round(s / 60)))

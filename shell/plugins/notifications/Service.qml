@@ -161,6 +161,15 @@ Item {
   // Session-only rows retain their sender objects in refs, never in a model.
   property var centerEntries: []
   readonly property int centerCount: centerEntries.length
+  // Bound retained snapshots and sender objects independently of the popup deck.
+  readonly property int maxCenterNotifications: Store.HISTORY_LIMIT
+
+  function addToCenter(row) {
+    var entries = [row].concat(centerEntries.filter(function(entry) { return entry.key !== row.key }))
+    var evicted = entries.slice(maxCenterNotifications)
+    centerEntries = entries.slice(0, maxCenterNotifications)
+    for (var i = 0; i < evicted.length; i++) finishClose(evicted[i].key, "dismissed")
+  }
 
   function centerRow(key) {
     for (var i = 0; i < centerEntries.length; i++)
@@ -178,6 +187,7 @@ Item {
     var row = Store.normalise(entry)
     row.duration = durationFor(row.urgency, row.expireTimeout)
     removeCenter(key)
+    storePut(row)
     showRow(row)
   }
 
@@ -860,7 +870,7 @@ Item {
     if (!liveKeys[key]) { unmarkLeaving(key); return }
     if (at >= 0 && (reason === "shelved" || reason === "expired") && key.indexOf("placeholder") !== 0) {
       var row = Store.normalise(toasts.get(at))
-      centerEntries = [row].concat(centerEntries.filter(function(entry) { return entry.key !== key }))
+      addToCenter(row)
       storeDrop(key)
       toasts.remove(at)
     } else {

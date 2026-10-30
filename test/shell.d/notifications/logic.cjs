@@ -299,23 +299,23 @@ for (const body of ['Your verification code is 938271', 'Your code is 938 271', 
 
 // --------------------------------------------------- Service.qml functions
 const source = fs.readFileSync(load.dir + '/Service.qml', 'utf8')
-// One function from Service.qml by name: its own line when that balances,
+// One function from a QML source by name: its own line when that balances,
 // else up to the closing brace at its indent. QML return types are dropped.
-function fn(name) {
-  const m = source.match(new RegExp('^( *)function ' + name + '\\(.*$', 'm'))
-  if (!m) throw new Error('Service.qml has no function ' + name)
+function fn(name, sourceText = source) {
+  const m = sourceText.match(new RegExp('^( *)function ' + name + '\\(.*$', 'm'))
+  if (!m) throw new Error('QML source has no function ' + name)
   let text = m[0]
   const opens = text.split('{').length - 1
   if (!opens || opens > text.split('}').length - 1) {
-    const end = source.indexOf('\n' + m[1] + '}', m.index)
-    if (end < 0) throw new Error('Service.qml function ' + name + ' never closes')
-    text = source.slice(m.index, end + m[1].length + 2)
+    const end = sourceText.indexOf('\n' + m[1] + '}', m.index)
+    if (end < 0) throw new Error('QML source function ' + name + ' never closes')
+    text = sourceText.slice(m.index, end + m[1].length + 2)
   }
   return text.replace(/^( *function \w+\([^)]*\))\s*:\s*\w+/, '$1')
 }
 function runIn(scope, ...names) {
   vm.createContext(scope)
-  vm.runInContext(names.map(fn).join('\n'), scope)
+  vm.runInContext(names.map(name => fn(name)).join('\n'), scope)
   return scope
 }
 
@@ -335,7 +335,7 @@ const capacityFunctions = ['pinDeckDisplay', 'showsOn', 'fullscreenOn',
   'nextKey', 'rowIndexFor', 'keyForOriginal', 'handleNotification', 'watchNotification', 'showRow', 'release', 'closeToast',
   'closeToasts', 'unmarkLeaving', 'finishDeparted', 'newestLive', 'finishLeaving', 'finishClose', 'clearAll', 'dismissNewest', 'releaseHeld', 'restoreRows', 'actionsOf', 'dismissOne',
   'deedsFor', 'runDeed', 'invokeAction', 'invokeSenderAction', 'actOnNewest', 'act', 'clickable', 'activate', 'openWindows', 'windowForPid', 'focusWindow',
-  'centerRow', 'removeCenter', 'restoreCenter', 'clearCenter', 'shelfToast', 'storePut', 'storeClose', 'storeDrop', 'storeRecord', 'saveSoon', 'loadLive']
+  'addToCenter', 'centerRow', 'removeCenter', 'restoreCenter', 'clearCenter', 'shelfToast', 'storePut', 'storeClose', 'storeDrop', 'storeRecord', 'saveSoon', 'loadLive']
 
 function newCapacityScope() {
   const toasts = { rows: [],
@@ -346,7 +346,7 @@ function newCapacityScope() {
     remove(i) { this.rows.splice(i, 1) } }
   const later = []
   const s = {
-    centerEntries: [],
+    centerEntries: [], maxCenterNotifications: 100,
     toasts, refs: {}, refsRevision: 0, keySeed: 0, liveKeys: Object.create(null),
     maxLiveNotifications: 100, heights: {}, fresh: {}, leaving: {}, departures: {}, layoutRevision: 0,
     arriving: '', jumping: false, travel: 24, arriveDuration: 250, leaveDuration: 200, placements: {},
@@ -1040,8 +1040,6 @@ const eq = (actual, expected, message) => assert.deepEqual(plain(actual), plain(
   assert.equal(s.liveEntries.length, 100, 'a second load event is ignored')
 }
 
-console.log('notification logic: passed')
-
 { // Shelving and popup expiry retain the same sender and restore only one row.
   for (const reason of ['shelved', 'expired']) {
     const s = newCapacityScope(), n = s.fakeNotification(91, 'Keep me')
@@ -1106,3 +1104,59 @@ console.log('notification logic: passed')
   s.drainCallLater()
   assert.equal(s.centerEntries.length, 1, 'popup dismiss-all leaves the center alone')
 }
+
+{ // Restored popups rejoin the persistent live set and survive shell restart.
+  const s = newCapacityScope()
+  s.admit(s.fakeNotification(94, 'Restore across restart'))
+  const key = s.toasts.get(0).key
+  s.finishClose(key, 'shelved')
+  assert.equal(s.liveEntries.length, 0)
+  s.restoreCenter(key)
+  s.drainCallLater()
+  const afterRestart = newCapacityScope()
+  afterRestart.loadLive(Store.serialise(s.liveEntries))
+  afterRestart.drainCallLater()
+  assert.equal(afterRestart.toasts.count, 1)
+  assert.equal(afterRestart.toasts.get(0).key, key)
+}
+{ // Bounded center retention releases the oldest sender and reservation once.
+  const s = newCapacityScope()
+  const senders = []
+  for (let id = 1; id <= s.maxCenterNotifications + 3; id++) {
+    const sender = s.fakeNotification(id)
+    senders.push(sender)
+    s.admit(sender)
+    s.finishClose(s.toasts.get(0).key, id % 2 ? 'shelved' : 'expired')
+  }
+  assert.equal(s.centerEntries.length, s.maxCenterNotifications)
+  assert.equal(Object.keys(s.refs).length, s.maxCenterNotifications)
+  assert.equal(Object.keys(s.liveKeys).length, s.maxCenterNotifications)
+  assert.equal(s.centerEntries[0].originalId, 103)
+  for (const sender of senders.slice(0, 3)) assert.equal(sender.closeAttempts, 1)
+  for (const sender of senders.slice(3)) assert.equal(sender.closeAttempts, 0)
+  s.clearCenter()
+  assert.equal(Object.keys(s.refs).length, 0)
+  assert.equal(Object.keys(s.liveKeys).length, 0)
+  for (const sender of senders) assert.equal(sender.closeAttempts, 1)
+}
+{ // Keyboard selection follows identity through arrivals, updates and removal.
+  const panelSource = fs.readFileSync(load.dir + '/../panels/notification-center/Panel.qml', 'utf8')
+  const s = { entries: [{ key: 'older' }, { key: 'selected' }], selectedNotificationKey: 'selected' }
+  vm.createContext(s)
+  vm.runInContext(['indexForKey', 'selectedKey', 'moveSelection', 'reconcileSelection'].map(name => fn(name, panelSource)).join('\n'), s)
+  Object.defineProperty(s, 'selectedIndex', { get: () => s.indexForKey(s.selectedNotificationKey) })
+  s.entries.unshift({ key: 'arrival' })
+  s.reconcileSelection()
+  assert.equal(s.selectedKey(), 'selected')
+  assert.equal(s.selectedIndex, 2)
+  s.entries = s.entries.map(row => ({ ...row, summary: 'Replacement' }))
+  s.reconcileSelection()
+  assert.equal(s.selectedKey(), 'selected')
+  s.moveSelection(-1)
+  assert.equal(s.selectedKey(), 'older')
+  s.entries = s.entries.filter(row => row.key !== 'older')
+  s.reconcileSelection()
+  assert.equal(s.selectedKey(), '', 'removal must not silently select another destructive target')
+}
+
+console.log('notification logic: passed')

@@ -402,6 +402,7 @@
   "notifications.copyCode": "Copy code",
   "notifications.copyThisCode": "Copy %1",
   "notifications.minutesAgo": "%1m",
+  "notifications.centerTimestampFormat": "ddd HH:mm",
   "notifications.centerTitle": "Notifications",
   "notifications.centerEmpty": "No stored notifications",
   "notifications.moveToCenter": "Move to Notification Center",

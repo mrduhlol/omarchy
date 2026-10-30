@@ -14,14 +14,39 @@ Panel {
   implicitHeight: button.implicitHeight
   readonly property var notifications: bar?.shell?.firstPartyServiceFor("omarchy.notifications") ?? null
   readonly property var entries: notifications ? notifications.centerEntries : []
-  property int selectedIndex: -1
+  property string selectedNotificationKey: ""
+  readonly property int selectedIndex: indexForKey(selectedNotificationKey)
 
-  function selectedKey() {
-    return selectedIndex >= 0 && selectedIndex < entries.length ? entries[selectedIndex].key : ""
+  function indexForKey(key) {
+    for (var i = 0; i < entries.length; i++)
+      if (entries[i].key === key) return i
+    return -1
   }
 
-  onEntriesChanged: selectedIndex = Math.min(selectedIndex, entries.length - 1)
-  onOpenedChanged: if (opened) selectedIndex = -1
+  function selectedKey() {
+    return selectedIndex >= 0 ? selectedNotificationKey : ""
+  }
+
+  function moveSelection(delta) {
+    if (!entries.length) return
+    var index = Math.max(0, Math.min(entries.length - 1, selectedIndex + delta))
+    selectedNotificationKey = entries[index].key
+  }
+
+  function reconcileSelection() {
+    if (selectedIndex < 0) selectedNotificationKey = ""
+  }
+
+  function keepSelectionVisible() {
+    if (panel.loadedContent) panel.loadedContent.keepSelectionVisible()
+  }
+
+  onEntriesChanged: {
+    reconcileSelection()
+    // Replacing ListView's array model resets its viewport after this signal.
+    Qt.callLater(keepSelectionVisible)
+  }
+  onOpenedChanged: if (opened) selectedNotificationKey = ""
 
   BarIconButton {
     id: button
@@ -59,12 +84,15 @@ Panel {
     content: PanelKeyCatcher {
       anchors.fill: parent
       implicitHeight: column.implicitHeight
+      function keepSelectionVisible() {
+        if (root.selectedIndex >= 0) list.positionViewAtIndex(root.selectedIndex, ListView.Contain)
+      }
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onMoveRequested: function(dx, dy) {
         if (!dy || !root.entries.length) return
-        root.selectedIndex = Math.max(0, Math.min(root.entries.length - 1, root.selectedIndex + dy))
-        list.positionViewAtIndex(root.selectedIndex, ListView.Contain)
+        root.moveSelection(dy)
+        keepSelectionVisible()
       }
       onActivateRequested: if (root.selectedKey()) root.notifications.restoreCenter(root.selectedKey())
       onDeleteRequested: if (root.selectedKey()) root.notifications.closeToast(root.selectedKey(), "dismissed")
